@@ -64,7 +64,7 @@ const (
 	errWriteCreds      = "cannot write Terraform credentials"
 	errWriteGitCreds   = "cannot write .git-credentials to /tmp dir"
 	errWriteConfig     = "cannot write Terraform configuration " + tfConfig
-	errWriteMain       = "cannot write Terraform configuration " + tfMain
+	errWriteMain       = "cannot write Terraform configuration "
 	errWriteBackend    = "cannot write Terraform configuration " + tfBackendFile
 	errInit            = "cannot initialize Terraform configuration"
 	errWorkspace       = "cannot select Terraform workspace"
@@ -87,6 +87,7 @@ const (
 	// TODO(negz): Make the Terraform binary path and work dir configurable.
 	tfPath        = "terraform"
 	tfMain        = "main.tf"
+	tfMainJSON    = "main.tf.json"
 	tfConfig      = "crossplane-provider-config.tf"
 	tfBackendFile = "crossplane.remote.tfbackend"
 )
@@ -249,8 +250,12 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 
 	case v1beta1.ModuleSourceInline:
-		if err := c.fs.WriteFile(filepath.Join(dir, tfMain), []byte(cr.Spec.ForProvider.Module), 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteMain)
+		filename := tfMain
+		if cr.Spec.ForProvider.InlineFormat == v1beta1.InlineFormatJSON {
+			filename = tfMainJSON
+		}
+		if err := c.fs.WriteFile(filepath.Join(dir, filename), []byte(cr.Spec.ForProvider.Module), 0600); err != nil {
+			return nil, errors.Wrap(err, errWriteMain+filename)
 		}
 	}
 
