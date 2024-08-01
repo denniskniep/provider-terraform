@@ -36,6 +36,7 @@ import (
 
 	"sync"
 
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/pkg/errors"
 )
 
@@ -128,6 +129,8 @@ type Harness struct {
 	// Environment Variables
 	Envs []string
 
+	Logger logging.Logger
+
 	// TODO(negz): Harness is a subset of exec.Cmd. If callers need more insight
 	// into what the underlying Terraform binary is doing (e.g. for debugging)
 	// we could consider allowing them to attach io.Writers to Stdout and Stdin
@@ -197,7 +200,7 @@ func (h Harness) Init(ctx context.Context, o ...InitOption) error {
 		defer rwmutex.Unlock()
 	}
 
-	_, err := runCommand(ctx, cmd)
+	_, err := h.runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -219,7 +222,7 @@ func (h Harness) Validate(ctx context.Context) error {
 
 	// The validate command returns zero for a valid module and non-zero for an
 	// invalid module, but it returns its JSON to stdout either way.
-	out, err := runCommand(ctx, cmd)
+	out, err := h.runCommand(ctx, cmd)
 
 	r := &result{}
 	if jerr := json.Unmarshal(out, r); jerr != nil {
@@ -247,7 +250,7 @@ func (h Harness) Workspace(ctx context.Context, name string) error {
 		cmd.Env = append(os.Environ(), h.Envs...)
 	}
 
-	if _, err := runCommand(ctx, cmd); err == nil {
+	if _, err := h.runCommand(ctx, cmd); err == nil {
 		// We successfully selected the workspace; we're done.
 		return nil
 	}
@@ -263,7 +266,7 @@ func (h Harness) Workspace(ctx context.Context, name string) error {
 		defer rwmutex.RUnlock()
 	}
 
-	_, err := runCommand(ctx, cmd)
+	_, err := h.runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -275,7 +278,7 @@ func (h Harness) DeleteCurrentWorkspace(ctx context.Context) error {
 		cmd.Env = append(os.Environ(), h.Envs...)
 	}
 
-	n, err := runCommand(ctx, cmd)
+	n, err := h.runCommand(ctx, cmd)
 	if err != nil {
 		return Classify(err)
 	}
@@ -300,7 +303,7 @@ func (h Harness) DeleteCurrentWorkspace(ctx context.Context) error {
 		defer rwmutex.RUnlock()
 	}
 
-	_, err = runCommand(ctx, cmd)
+	_, err = h.runCommand(ctx, cmd)
 	if err == nil {
 		// We successfully deleted the workspace; we're done.
 		return nil
@@ -315,7 +318,7 @@ func (h Harness) GenerateChecksum(ctx context.Context) (string, error) {
 	cmd := exec.Command("/bin/sh", "-c", command) //nolint:gosec
 	cmd.Dir = h.Dir
 
-	checksum, err := runCommand(ctx, cmd)
+	checksum, err := h.runCommand(ctx, cmd)
 	result := strings.ReplaceAll(string(checksum), "\n", "")
 	return result, Classify(err)
 }
@@ -418,7 +421,7 @@ func (h Harness) Outputs(ctx context.Context) ([]Output, error) {
 		defer rwmutex.RUnlock()
 	}
 
-	out, err := runCommand(ctx, cmd)
+	out, err := h.runCommand(ctx, cmd)
 	if jerr := json.Unmarshal(out, &outputs); jerr != nil {
 		// If stdout doesn't appear to be the JSON we expected we try to extract
 		// an error from stderr.
@@ -470,7 +473,7 @@ func (h Harness) Resources(ctx context.Context) ([]string, error) {
 		defer rwmutex.RUnlock()
 	}
 
-	out, err := runCommand(ctx, cmd)
+	out, err := h.runCommand(ctx, cmd)
 	if err != nil {
 		return nil, Classify(err)
 	}
@@ -559,7 +562,7 @@ func (h Harness) Diff(ctx context.Context, o ...Option) (bool, error) {
 	// 0 - Succeeded, diff is empty (no changes)
 	// 1 - Errored
 	// 2 - Succeeded, there is a diff
-	_, err := runCommand(ctx, cmd)
+	_, err := h.runCommand(ctx, cmd)
 	if cmd.ProcessState.ExitCode() == 2 {
 		return true, nil
 	}
@@ -591,7 +594,7 @@ func (h Harness) Apply(ctx context.Context, o ...Option) error {
 		defer rwmutex.RUnlock()
 	}
 
-	_, err := runCommand(ctx, cmd)
+	_, err := h.runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -620,7 +623,7 @@ func (h Harness) Destroy(ctx context.Context, o ...Option) error {
 		defer rwmutex.RUnlock()
 	}
 
-	_, err := runCommand(ctx, cmd)
+	_, err := h.runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -631,10 +634,11 @@ type cmdResult struct {
 }
 
 // runCommand executes the requested command and sends the process SIGTERM if the context finishes before the command
-func runCommand(ctx context.Context, c *exec.Cmd) ([]byte, error) {
+func (h Harness) runCommand(ctx context.Context, c *exec.Cmd) ([]byte, error) {
 	ch := make(chan cmdResult, 1)
 	go func() {
 		defer close(ch)
+		h.logCommand(c)
 		r, e := c.Output()
 		ch <- cmdResult{out: r, err: e}
 	}()
@@ -653,6 +657,35 @@ func runCommand(ctx context.Context, c *exec.Cmd) ([]byte, error) {
 		}
 		return nil, errors.Wrap(err, errRunCommand)
 	case res := <-ch:
+		h.logStdOut(res.out)
 		return res.out, res.err
 	}
+}
+
+func (h Harness) logCommand(c *exec.Cmd) {
+	if h.Logger == nil {
+		return
+	}
+
+	args := ""
+	for _, a := range c.Args {
+		args += " " + a
+	}
+
+	envs := ""
+	for _, a := range c.Env {
+		envs += " " + a
+	}
+
+	cmdLog := "Executed command: '" + c.Path + "' in dir '" + c.Dir + "' Args: '" + args + "' EnvVars: '" + envs + "'"
+
+	h.Logger.Debug(cmdLog)
+}
+
+func (h Harness) logStdOut(stdOut []byte) {
+	if h.Logger == nil {
+		return
+	}
+
+	h.Logger.Debug("StdOut of executed command:" + string(stdOut))
 }

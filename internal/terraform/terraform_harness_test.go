@@ -30,7 +30,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 // Terraform binary to invoke.
@@ -46,6 +48,12 @@ var tfBinaryPath = func() string {
 var tfTestDataPath = func() string {
 	wd, _ := os.Getwd()
 	return filepath.Join(wd, "testdata")
+}
+
+func makeLogger() logging.Logger {
+	zl := zap.New(zap.UseDevMode(true))
+	log := logging.NewLogrLogger(zl.WithName("provider-terraform"))
+	return log
 }
 
 func TestValidate(t *testing.T) {
@@ -73,7 +81,8 @@ func TestValidate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Validation is a read-only operation, so we operate directly on
 			// our test data instead of creating a temporary directory.
-			tf := Harness{Path: tfBinaryPath, Dir: tc.module}
+
+			tf := Harness{Path: tfBinaryPath, Dir: tc.module, Logger: makeLogger()}
 			got := tf.Validate(tc.ctx)
 
 			if diff := cmp.Diff(tc.want, got, test.EquateErrors()); diff != "" {
@@ -120,7 +129,7 @@ func TestWorkspace(t *testing.T) {
 			}
 			defer os.RemoveAll(dir)
 
-			tf := Harness{Path: tfBinaryPath, Dir: dir}
+			tf := Harness{Path: tfBinaryPath, Dir: dir, Logger: makeLogger()}
 			got := tf.Workspace(tc.args.ctx, tc.args.name)
 
 			if diff := cmp.Diff(tc.want, got, test.EquateErrors()); diff != "" {
@@ -159,7 +168,7 @@ func TestDeleteWorkspace(t *testing.T) {
 			}
 			defer os.RemoveAll(dir)
 
-			tf := Harness{Path: tfBinaryPath, Dir: dir}
+			tf := Harness{Path: tfBinaryPath, Dir: dir, Logger: makeLogger()}
 			_ = tf.Workspace(tc.args.ctx, tc.args.name)
 			got := tf.DeleteCurrentWorkspace(tc.args.ctx)
 
@@ -210,7 +219,7 @@ func TestOutputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Reading output is a read-only operation, so we operate directly
 			// on our test data instead of creating a temporary directory.
-			tf := Harness{Path: tfBinaryPath, Dir: tc.module}
+			tf := Harness{Path: tfBinaryPath, Dir: tc.module, Logger: makeLogger()}
 			got, err := tf.Outputs(tc.ctx)
 
 			if diff := cmp.Diff(tc.want.outputs, got, cmp.AllowUnexported(Output{})); diff != "" {
@@ -256,7 +265,7 @@ func TestResources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Reading output is a read-only operation, so we operate directly
 			// on our test data instead of creating a temporary directory.
-			tf := Harness{Path: tfBinaryPath, Dir: tc.module}
+			tf := Harness{Path: tfBinaryPath, Dir: tc.module, Logger: makeLogger()}
 			got, err := tf.Resources(tc.ctx)
 
 			if diff := cmp.Diff(tc.want.resources, got, cmp.AllowUnexported(Output{})); diff != "" {
@@ -439,7 +448,7 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 			}
 			defer os.RemoveAll(dir)
 
-			tf := Harness{Path: tfBinaryPath, Dir: dir, UsePluginCache: false}
+			tf := Harness{Path: tfBinaryPath, Dir: dir, UsePluginCache: false, Logger: makeLogger()}
 
 			err = tf.Init(tc.initArgs.ctx, tc.initArgs.o...)
 			if diff := cmp.Diff(tc.want.init, err, test.EquateErrors()); diff != "" {
@@ -501,7 +510,7 @@ func TestGenerateChecksum(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Reading output is a read-only operation, so we operate directly
 			// on our test data instead of creating a temporary directory.
-			tf := Harness{Path: tfBinaryPath, Dir: tc.module}
+			tf := Harness{Path: tfBinaryPath, Dir: tc.module, Logger: makeLogger()}
 			got, err := tf.GenerateChecksum(tc.ctx)
 
 			if diff := cmp.Diff(tc.want.output, got, cmp.AllowUnexported(Output{})); diff != "" {

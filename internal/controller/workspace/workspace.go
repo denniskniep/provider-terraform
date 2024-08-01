@@ -135,7 +135,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 		logger: o.Logger,
 		fs:     fs,
 		terraform: func(dir string, usePluginCache bool, envs ...string) tfclient {
-			return terraform.Harness{Path: tfPath, Dir: dir, UsePluginCache: usePluginCache, Envs: envs}
+			return terraform.Harness{Path: tfPath, Dir: dir, UsePluginCache: usePluginCache, Envs: envs, Logger: o.Logger}
 		},
 	}
 
